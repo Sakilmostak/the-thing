@@ -213,7 +213,6 @@ class Engine {
       cost: this.configuration.connectorCostPerTxn.value,
     };
     this.connectors.value.push(newConnector);
-    console.log(this.connectors);
   }
 
   removeConnector(idx: number) {
@@ -226,7 +225,6 @@ class Engine {
     connectors[connectors.length - 1] = temp;
     connectors.pop();
     this.connectors.value = connectors;
-    console.log(connectors);
   }
 
   toggleConnector(idx: number) {
@@ -240,7 +238,6 @@ class Engine {
   changeCheckoutExperience(exp: CheckoutExperience) {
     if (this.gameState == GameState.Paused) return;
     this.currentCheckoutExperience.value = exp;
-    console.log(this.currentCheckoutExperience);
   }
 
   focusPaymentDistribution() {
@@ -281,7 +278,6 @@ class Engine {
   /* Engine Logic */
 
   tick() {
-    console.log(this.timeLeft);
     switch (this.gameState) {
       case GameState.Initialized:
         return;
@@ -396,7 +392,6 @@ class Engine {
       daysLeft = Math.floor(this.timeLeft);
     } 
     orderValue = Math.floor(this.orders);
-    // console.log(this);
   }
 
   distributeOrders(orders: number): number {
