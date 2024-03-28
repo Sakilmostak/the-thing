@@ -1,5 +1,6 @@
 <script lang="ts">
     import { goto } from "$app/navigation";
+    import { onDestroy } from "svelte";
     import { type Questable } from "./quest";
     // import "../app.css";
 
@@ -112,6 +113,8 @@ type EngineConfiguration = {
   connectorCostPerTxn: RRange;
   // Threshold below which the game enters end game
   successRateThreshold: number;
+  // cooldown time after changing the routing strategy
+  routingStrategyChangeCooldownTime: number;
   // Tolerance time for which the SR can stay below threshold before game end
   toleranceTimeForSRDrop: number;
   // general drop-off rate per secs
@@ -141,6 +144,11 @@ enum CheckoutExperience {
   Redirect,
 }
 
+enum RoutingStrategy {
+  Cost,
+  Volume,
+}
+
 enum GameState {
   Initialized,
   Started,
@@ -163,6 +171,7 @@ class Engine {
   private currentQuest: Questable | null;
   private dropoutFactor: number;
   private currentCheckoutExperience: Freeze<CheckoutExperience>;
+  private currentRoutingStrategy: Freeze<RoutingStrategy>;
   private gameState: GameState;
   private successRateWindow: WindowArray<number>;
   private successRateDropTick: number;
@@ -188,12 +197,18 @@ class Engine {
       config.ticks,
     );
 
+    this.currentRoutingStrategy = new Freeze(
+      RoutingStrategy.Cost,
+      config.routingStrategyChangeCooldownTime,
+      config.ticks,
+    );
+
     this.gameState = GameState.Started;
 
     this.successRateWindow = new WindowArray(config.successRateWindowLength);
-    this.successRateDropTick = 0;
+    this.successRateDropTick = 1;
     this.callbacks = {};
-    this.paymentDistribution = 0;
+    this.paymentDistribution = 1;
 
     this.questList = this.configuration.quests.reverse();
   }
@@ -213,6 +228,9 @@ class Engine {
       cost: this.configuration.connectorCostPerTxn.value,
     };
     this.connectors.value.push(newConnector);
+    if(this.connectors.value.length>1) {
+      this.successRateDropTick-=Math.min(100-successRateValue,20)
+    }
   }
 
   removeConnector(idx: number) {
@@ -236,12 +254,17 @@ class Engine {
   }
 
   changeCheckoutExperience(exp: CheckoutExperience) {
-    if (this.gameState == GameState.Paused) return;
+    if (this.gameState === GameState.Paused) return;
     this.currentCheckoutExperience.value = exp;
   }
 
+  changeRoutingStrategy(strategy: RoutingStrategy) {
+    if (this.gameState === GameState.Paused) return;
+    this.currentRoutingStrategy.value = strategy;
+  }
+
   focusPaymentDistribution() {
-    if (this.gameState == GameState.Paused) return;
+    if (this.gameState === GameState.Paused) return;
     this.paymentDistribution += this.configuration.focusDeltaForPM;
 
     if (this.paymentDistribution >= 1) {
@@ -294,6 +317,7 @@ class Engine {
   private stateTicker() {
     this.connectors.tick();
     this.currentCheckoutExperience.tick();
+    this.currentRoutingStrategy.tick();
 
     if (this.currentQuest === null) {
       if (this.questList.length < 1) {
@@ -311,8 +335,9 @@ class Engine {
   }
 
   private successRateDropController(successRate: number) {
-    if (successRate < this.configuration.successRateThreshold) {
-      this.successRateDropTick += 1;
+    console.log(`${successRate} ${this.configuration.successRateThreshold}`);
+    if (successRate - this.successRateDropTick> this.configuration.successRateThreshold) {
+      this.successRateDropTick += 0.1;
 
       if (
         this.successRateDropTick >=
@@ -324,9 +349,7 @@ class Engine {
           ? this.callbacks.endGameEvent()
           : {};
       }
-    } else {
-      this.successRateDropTick = 0;
-    }
+    } 
   }
 
   private budgetController() {
@@ -352,6 +375,23 @@ class Engine {
     }
   }
 
+  private distortDropoutFactor() {
+    switch (this.currentCheckoutExperience.value) {
+      case CheckoutExperience.SDK:
+        this.dropoutFactor = 0.9;
+        break;
+      case CheckoutExperience.Redirect:
+        this.dropoutFactor = 0.8;
+        break;
+    }
+  }
+
+  /// ## Description
+  //
+  // - This function is used to distort the payment distribution
+  // - It is called every tick
+  // - It is responsible for distorting the payment distribution
+  //
   private distortFocusDistribution() {
     this.paymentDistribution -= this.configuration.autoFocusForPM;
 
@@ -364,6 +404,7 @@ class Engine {
     // tick states
     this.stateTicker();
     this.distortFocusDistribution();
+    this.distortDropoutFactor();
 
     // Quest Effects (Initial State Effect)
 
@@ -375,23 +416,30 @@ class Engine {
         (this.configuration.baseDropOffPercentage * this.dropoutFactor) / 100) *
       (this.connectors.value.length == 0 ? 0 : 1);
     const costIncured = this.distributeOrders(ordersPostDropOff);
-    const successRate = (ordersPostDropOff / totalOrders) * 100;
+    let successRate = (ordersPostDropOff / totalOrders) * 100;
+    this.successRateDropController(successRate);
+    console.log(this.successRateDropTick);
+    successRate-= this.successRateDropTick;
     
 
     // Affected States
     this.successRateWindow.push(successRate);
     this.budget -= costIncured;
     this.orders += ordersPostDropOff;
-    this.successRateDropController(successRate);
+    connectorAvaiable = this.connectors.value.length;
+    
     this.budgetController();
     this.timeController();
 
     // update states
-    successRateValue=successRate; 
+    if(successRate>=0){
+      successRateValue=Math.floor(successRate); 
+    }
     if(this.timeLeft>=0) {
       daysLeft = Math.floor(this.timeLeft);
-    } 
+    }
     orderValue = Math.floor(this.orders);
+    amountValue = Math.floor(this.budget);
   }
 
   distributeOrders(orders: number): number {
@@ -410,6 +458,16 @@ class Engine {
       let jump = 1 / (connectors.length - 1);
       let total = 0;
 
+      switch (this.currentRoutingStrategy.value) {
+        /// Cost Based routing, will leverage paymentDistribution, to sort connectors in the order of least cost
+        case RoutingStrategy.Cost:
+          connectors.sort((a, b) => a.cost - b.cost);
+          break;
+        case RoutingStrategy.Volume:
+          this.focusPaymentDistribution();
+          break;
+      }
+
       let distribution = connectors.map(() => {
         let distence = Math.abs(this.paymentDistribution - current);
         total += distence;
@@ -426,23 +484,29 @@ class Engine {
   }
 }
 
+// to remove setInterval once removed from the frame
+onDestroy(() => {
+  clearInterval(current_frame);
+})
+
 let default_config: EngineConfiguration = {
-    time: 10,
+    time: 90,
     ticks: 10,
     startBudget: 10000,
-    orderRate: 1,
+    orderRate: 70,
     maxConnectorCount: 10,
-    addConnectorCooldownTime: new RRange(0,5),
-    newQuestInterval: new RRange(0,5),
-    QuestDuration: new RRange(0,10),
-    connectorCostPerTxn: new RRange(0,10),
-    successRateThreshold: 0,
-    toleranceTimeForSRDrop: 0,
+    addConnectorCooldownTime: new RRange(0,10),
+    newQuestInterval: new RRange(1,10),
+    QuestDuration: new RRange(1,10),
+    connectorCostPerTxn: new RRange(1,3),
+    routingStrategyChangeCooldownTime: 5,
+    successRateThreshold: 45,
+    toleranceTimeForSRDrop: 20,
     baseDropOffPercentage: 5,
     checkoutExperienceChangeCooldownTime: 5,
     successRateWindowLength: 10,
-    focusDeltaForPM: 0,
-    autoFocusForPM: 0,
+    focusDeltaForPM: 5,
+    autoFocusForPM: 5,
     quests: []
 }
 
@@ -453,6 +517,8 @@ let current_frame = setInterval(curEngine.tick.bind(curEngine), 100);
 let successRateValue = 0;
 let daysLeft = Math.floor(curEngine.getTimeLeft());
 let orderValue = 0;
+let amountValue = curEngine.getCurrentBudget();
+let connectorAvaiable = 0;
 
 </script>
 
@@ -460,6 +526,11 @@ let orderValue = 0;
     <div
       class="stats w-2/5 min-w-fit stats-horizontal lg:stats-horizontal shadow bg-hyperswitch-bg text-white"
     >
+      <div class="stat">
+        <div class="stat-title">Amount</div>
+        <div class="stat-value">{amountValue}</div>
+      </div>
+
       <div class="stat">
         <div class="stat-title">Orders</div>
         <div class="stat-value">{orderValue}</div>
@@ -505,6 +576,7 @@ let orderValue = 0;
           <!-- row 1 -->
           <tr>
             <td>Connectors</td>
+            <td>{connectorAvaiable}</td>
             <td class="text-center">
               <button class="btn btn-sm bg-hyperswitch-blue text-white w-full"
               on:click={() => {
@@ -527,11 +599,17 @@ let orderValue = 0;
             <td>Payment Routing</td>
             <td class="text-center">
               <button class="btn btn-sm bg-hyperswitch-blue text-white w-full"
+              on:click={() => {
+                curEngine.changeRoutingStrategy(RoutingStrategy.Cost);
+              }}
                 >Cost Based</button
               >
             </td>
             <td class="text-center">
               <button class="btn btn-sm bg-hyperswitch-blue text-white w-full"
+              on:click={() => {
+                curEngine.changeRoutingStrategy(RoutingStrategy.Volume);
+              }}
                 >Volume Based</button
               >
             </td>
