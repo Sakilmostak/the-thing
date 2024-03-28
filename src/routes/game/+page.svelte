@@ -335,7 +335,6 @@ class Engine {
   }
 
   private successRateDropController(successRate: number) {
-    console.log(`${successRate} ${this.configuration.successRateThreshold}`);
     if (successRate - this.successRateDropTick> this.configuration.successRateThreshold) {
       this.successRateDropTick += 0.1;
 
@@ -418,7 +417,6 @@ class Engine {
     const costIncured = this.distributeOrders(ordersPostDropOff);
     let successRate = (ordersPostDropOff / totalOrders) * 100;
     this.successRateDropController(successRate);
-    console.log(this.successRateDropTick);
     successRate-= this.successRateDropTick;
     
 
