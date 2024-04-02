@@ -2,7 +2,8 @@
     import { goto } from "$app/navigation";
     import { onDestroy } from "svelte";
     import { type Questable } from "./quest";
-    // import "../app.css";
+    import { scaleLinear } from 'd3-scale'; // for adding animation
+
 
 class RRange {
   readonly start: number;
@@ -175,6 +176,7 @@ class Engine {
   private gameState: GameState;
   private successRateWindow: WindowArray<number>;
   private successRateDropTick: number;
+  private dropDerivative: number; // controls the rate of drop with each connector addition
   private callbacks: EventCallbacks;
   private paymentDistribution: number;
   private questList: [Questable, number][];
@@ -209,6 +211,7 @@ class Engine {
     this.successRateDropTick = 1;
     this.callbacks = {};
     this.paymentDistribution = 1;
+    this.dropDerivative = 0;
 
     this.questList = this.configuration.quests.reverse();
   }
@@ -221,12 +224,15 @@ class Engine {
 
   addConnector(name: string, metadata?: any) {
     if (this.gameState == GameState.Paused) return;
+    if (this.budget < 1000) return;
     const newConnector: Connector = {
       enabled: true,
       name,
       metadata,
       cost: this.configuration.connectorCostPerTxn.value,
     };
+    this.budget-=1000; // cost of adding connector
+    this.dropDerivative+=0.02;
     this.connectors.value.push(newConnector);
     if(this.connectors.value.length>1) {
       this.successRateDropTick-=Math.min(100-successRateValue,20)
@@ -236,6 +242,8 @@ class Engine {
   removeConnector(idx: number) {
     if (this.gameState == GameState.Paused) return;
     if (idx >= this.connectors.value.length) return;
+
+    this.dropDerivative-=0.02;
 
     let connectors = this.connectors.value;
     let temp = connectors[idx];
@@ -255,6 +263,8 @@ class Engine {
 
   changeCheckoutExperience(exp: CheckoutExperience) {
     if (this.gameState === GameState.Paused) return;
+    if (this.budget < 500) return;
+    this.budget-=500;
     this.currentCheckoutExperience.value = exp;
   }
 
@@ -337,6 +347,7 @@ class Engine {
   private successRateDropController(successRate: number) {
     if (successRate - this.successRateDropTick> this.configuration.successRateThreshold) {
       this.successRateDropTick += 0.1;
+      this.successRateDropTick -= this.dropDerivative;
 
       if (
         this.successRateDropTick >=
@@ -352,7 +363,7 @@ class Engine {
   }
 
   private budgetController() {
-    if (this.budget <= 0) {
+    if (this.budget < 0) {
       this.gameState = GameState.Ended;
 
       this.callbacks.endGameEvent !== undefined
@@ -437,7 +448,9 @@ class Engine {
       daysLeft = Math.floor(this.timeLeft);
     }
     orderValue = Math.floor(this.orders);
-    amountValue = Math.floor(this.budget);
+    if(this.budget>=0) {
+      amountValue = Math.floor(this.budget);
+    }
   }
 
   distributeOrders(orders: number): number {
@@ -498,7 +511,7 @@ let default_config: EngineConfiguration = {
     QuestDuration: new RRange(1,10),
     connectorCostPerTxn: new RRange(1,3),
     routingStrategyChangeCooldownTime: 5,
-    successRateThreshold: 45,
+    successRateThreshold: 60,
     toleranceTimeForSRDrop: 20,
     baseDropOffPercentage: 5,
     checkoutExperienceChangeCooldownTime: 5,
@@ -559,12 +572,6 @@ let connectorAvaiable = 0;
     </div>
   
     <button class="btn btn-outlin btn-info">User Action</button>
-  
-    <div class="card w-2/5 min-w-fit bg-hyperswitch-bg shadow-xl text-white">
-      <div class="card-body">
-        <h2 class="card-title">Graph</h2>
-      </div>
-    </div>
   
     <div class="overflow-x-auto text-white w-2/5 min-w-fit">
       <table class="table">
@@ -664,4 +671,55 @@ let connectorAvaiable = 0;
     .mainContainer button:hover {
       opacity: 0.7;
     }
+
+    .chart,
+	h2,
+	p {
+		width: 100%;
+		max-width: 500px;
+		margin-left: auto;
+		margin-right: auto;
+	}
+
+	svg {
+		position: relative;
+		width: 100%;
+		height: 200px;
+		overflow: visible;
+	}
+
+	.tick {
+		font-size: 0.725em;
+		font-weight: 200;
+	}
+
+	.tick line {
+		stroke: #888;
+		stroke-dasharray: 2;
+	}
+
+	.tick text {
+		fill: #888;
+		text-anchor: start;
+	}
+
+	.tick.tick-0 line {
+		stroke-dasharray: 0;
+	}
+
+	.x-axis .tick text {
+		text-anchor: middle;
+	}
+
+	.path-line {
+		fill: none;
+		stroke: rgb(0, 100, 100);
+		stroke-linejoin: round;
+		stroke-linecap: round;
+		stroke-width: 2;
+	}
+
+	.path-area {
+		fill: rgba(0, 100, 100, 0.2);
+	}
   </style>
