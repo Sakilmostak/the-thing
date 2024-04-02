@@ -61,33 +61,22 @@ class Freeze<T> {
   }
 }
 
-class WindowArray<T> {
-  private data: T[];
-  private size: number;
+class WindowArray {
+  public data: Array<number>;
+  public size: number;
   constructor(size: number) {
-    this.data = [];
+    this.data = new Array(size);
+    this.data.fill(0);
     this.size = size;
   }
 
-  push(value: T): T | undefined {
+  push(value: any): any | undefined {
     if (this.data.length == this.size) {
       let removedValue = this.data.shift();
       this.data.push(value);
       return removedValue;
     } else {
       this.data.push(value);
-      return undefined;
-    }
-  }
-
-  get inner(): T[] {
-    return this.data;
-  }
-
-  last(): T | undefined {
-    if (this.data.length !== 0) {
-      return this.data[this.data.length - 1];
-    } else {
       return undefined;
     }
   }
@@ -174,9 +163,10 @@ class Engine {
   private currentCheckoutExperience: Freeze<CheckoutExperience>;
   private currentRoutingStrategy: Freeze<RoutingStrategy>;
   private gameState: GameState;
-  private successRateWindow: WindowArray<number>;
   private successRateDropTick: number;
   private dropDerivative: number; // controls the rate of drop with each connector addition
+  private routingStrategyDropControl: number;
+  private checkoutExperienceDropControl: number;
   private callbacks: EventCallbacks;
   private paymentDistribution: number;
   private questList: [Questable, number][];
@@ -207,11 +197,12 @@ class Engine {
 
     this.gameState = GameState.Started;
 
-    this.successRateWindow = new WindowArray(config.successRateWindowLength);
-    this.successRateDropTick = 1;
+    this.successRateDropTick = 1.5;
     this.callbacks = {};
     this.paymentDistribution = 1;
     this.dropDerivative = 0;
+    this.routingStrategyDropControl = 0.03;
+    this.checkoutExperienceDropControl = 0.04;
 
     this.questList = this.configuration.quests.reverse();
   }
@@ -231,19 +222,16 @@ class Engine {
       metadata,
       cost: this.configuration.connectorCostPerTxn.value,
     };
-    this.budget-=1000; // cost of adding connector
-    this.dropDerivative+=0.02;
+    this.budget-=1500; // cost of adding connector
+    this.dropDerivative+=0.03;
     this.connectors.value.push(newConnector);
-    if(this.connectors.value.length>1) {
-      this.successRateDropTick-=Math.min(100-successRateValue,20)
-    }
   }
 
   removeConnector(idx: number) {
     if (this.gameState == GameState.Paused) return;
     if (idx >= this.connectors.value.length) return;
 
-    this.dropDerivative-=0.02;
+    this.dropDerivative-=0.03;
 
     let connectors = this.connectors.value;
     let temp = connectors[idx];
@@ -264,13 +252,26 @@ class Engine {
   changeCheckoutExperience(exp: CheckoutExperience) {
     if (this.gameState === GameState.Paused) return;
     if (this.budget < 500) return;
-    this.budget-=500;
-    this.currentCheckoutExperience.value = exp;
+    
+    if(this.currentCheckoutExperience.value !== exp){
+      this.budget-=750;
+      this.dropDerivative+=this.checkoutExperienceDropControl
+      if(this.checkoutExperienceDropControl>0) {
+        this.checkoutExperienceDropControl -= 0.02;
+      };
+      this.currentCheckoutExperience.value = exp;
+    }
+    
   }
 
   changeRoutingStrategy(strategy: RoutingStrategy) {
     if (this.gameState === GameState.Paused) return;
-    this.currentRoutingStrategy.value = strategy;
+    if(true || this.currentRoutingStrategy.value !== strategy){
+      this.currentRoutingStrategy.value = strategy;
+      this.dropDerivative+=this.routingStrategyDropControl;
+      this.routingStrategyDropControl/=2.0;
+    }
+
   }
 
   focusPaymentDistribution() {
@@ -284,16 +285,8 @@ class Engine {
 
   /* Statistics */
 
-  getCurrentSuccessRate(): number | undefined {
-    return this.successRateWindow.last();
-  }
-
   getTimeLeft(): number {
     return this.timeLeft;
-  }
-
-  getSuccessRateWindow(): number[] {
-    return this.successRateWindow.inner;
   }
 
   getCurrentBudget(): number {
@@ -385,17 +378,6 @@ class Engine {
     }
   }
 
-  private distortDropoutFactor() {
-    switch (this.currentCheckoutExperience.value) {
-      case CheckoutExperience.SDK:
-        this.dropoutFactor = 0.9;
-        break;
-      case CheckoutExperience.Redirect:
-        this.dropoutFactor = 0.8;
-        break;
-    }
-  }
-
   /// ## Description
   //
   // - This function is used to distort the payment distribution
@@ -414,25 +396,21 @@ class Engine {
     // tick states
     this.stateTicker();
     this.distortFocusDistribution();
-    this.distortDropoutFactor();
 
     // Quest Effects (Initial State Effect)
 
     // Processing
     const totalOrders = this.configuration.orderRate / this.configuration.ticks;
-    const ordersPostDropOff =
-      totalOrders *
-      (1 -
-        (this.configuration.baseDropOffPercentage * this.dropoutFactor) / 100) *
-      (this.connectors.value.length == 0 ? 0 : 1);
-    const costIncured = this.distributeOrders(ordersPostDropOff);
-    let successRate = (ordersPostDropOff / totalOrders) * 100;
+    let successRate = 100 - this.configuration.baseDropOffPercentage;
     this.successRateDropController(successRate);
     successRate-= this.successRateDropTick;
+    const ordersPostDropOff =
+      totalOrders * (successRate/100.0) *
+      (this.connectors.value.length == 0 ? 0 : 1);
+    const costIncured = this.distributeOrders(ordersPostDropOff);
     
 
     // Affected States
-    this.successRateWindow.push(successRate);
     this.budget -= costIncured;
     this.orders += ordersPostDropOff;
     connectorAvaiable = this.connectors.value.length;
@@ -441,6 +419,9 @@ class Engine {
     this.timeController();
 
     // update states
+    successWindow.push(Math.floor(this.orders));
+    successWindow = successWindow;
+
     if(successRate>=0){
       successRateValue=Math.floor(successRate); 
     }
@@ -448,6 +429,7 @@ class Engine {
       daysLeft = Math.floor(this.timeLeft);
     }
     orderValue = Math.floor(this.orders);
+    orderRate = Math.floor(ordersPostDropOff);
     if(this.budget>=0) {
       amountValue = Math.floor(this.budget);
     }
@@ -463,7 +445,7 @@ class Engine {
     if (connectorCount == 0) {
       return 0;
     } else if (connectorCount == 1) {
-      return orders * connectors[0].cost;
+      return (orders * connectors[0].cost)/100.0;
     } else {
       let current = 0;
       let jump = 1 / (connectors.length - 1);
@@ -488,7 +470,7 @@ class Engine {
 
       return distribution
         .map((value: number, index: number) => {
-          return ((value * orders) / total) * connectors[index].cost;
+          return ((value * orders) / (total * 100)) * connectors[index].cost;
         })
         .reduce((prev, cur) => prev + cur);
     }
@@ -503,8 +485,8 @@ onDestroy(() => {
 let default_config: EngineConfiguration = {
     time: 90,
     ticks: 10,
-    startBudget: 10000,
-    orderRate: 70,
+    startBudget: 20000,
+    orderRate: 500,
     maxConnectorCount: 10,
     addConnectorCooldownTime: new RRange(0,10),
     newQuestInterval: new RRange(1,10),
@@ -515,7 +497,7 @@ let default_config: EngineConfiguration = {
     toleranceTimeForSRDrop: 20,
     baseDropOffPercentage: 5,
     checkoutExperienceChangeCooldownTime: 5,
-    successRateWindowLength: 10,
+    successRateWindowLength: 20,
     focusDeltaForPM: 5,
     autoFocusForPM: 5,
     quests: []
@@ -528,8 +510,10 @@ let current_frame = setInterval(curEngine.tick.bind(curEngine), 100);
 let successRateValue = 0;
 let daysLeft = Math.floor(curEngine.getTimeLeft());
 let orderValue = 0;
+let orderRate = 0;
 let amountValue = curEngine.getCurrentBudget();
 let connectorAvaiable = 0;
+let successWindow = new WindowArray(8);
 
 </script>
 
@@ -545,6 +529,11 @@ let connectorAvaiable = 0;
       <div class="stat">
         <div class="stat-title">Orders</div>
         <div class="stat-value">{orderValue}</div>
+      </div>
+
+      <div class="stat">
+        <div class="stat-title">Order Rate</div>
+        <div class="stat-value">{orderRate}</div>
       </div>
   
       <div class="stat">
@@ -570,6 +559,14 @@ let connectorAvaiable = 0;
         </div>
       </div>
     </div>
+
+    <div class="stats w-2/5 min-w-fit stats-horizontal lg:stats-horizontal shadow bg-hyperswitch-bg text-white">
+      {#each successWindow.data as ele} 
+        <div class="stat">
+          <div class="stat-value">{ele}</div>
+        </div>
+      {/each}
+    </div>
   
     <button class="btn btn-outlin btn-info">User Action</button>
   
@@ -581,7 +578,11 @@ let connectorAvaiable = 0;
           <!-- row 1 -->
           <tr>
             <td>Connectors</td>
-            <td>{connectorAvaiable}</td>
+            <td class="text-center">
+              <button class="btn btn-sm bg-hyperswitch-blue text-white w-full"
+                >{connectorAvaiable}</button
+              >
+            </td>
             <td class="text-center">
               <button class="btn btn-sm bg-hyperswitch-blue text-white w-full"
               on:click={() => {
