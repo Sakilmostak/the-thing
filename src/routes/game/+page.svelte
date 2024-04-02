@@ -401,14 +401,18 @@ class Engine {
 
     // Processing
     const totalOrders = this.configuration.orderRate / this.configuration.ticks;
-    let successRate = 100 - this.configuration.baseDropOffPercentage;
+    let successRate = 75; //base percentage
+    if(100-this.configuration.baseDropOffPercentage>=successRate-this.successRateDropTick){
+      successRate-= this.successRateDropTick;
+    }
+    else {
+      successRate = 100-this.configuration.baseDropOffPercentage;
+    }
     this.successRateDropController(successRate);
-    successRate-= this.successRateDropTick;
     const ordersPostDropOff =
       totalOrders * (successRate/100.0) *
       (this.connectors.value.length == 0 ? 0 : 1);
     const costIncured = this.distributeOrders(ordersPostDropOff);
-    
 
     // Affected States
     this.budget -= costIncured;
@@ -445,7 +449,7 @@ class Engine {
     if (connectorCount == 0) {
       return 0;
     } else if (connectorCount == 1) {
-      return (orders * connectors[0].cost)/100.0;
+      return (orders * connectors[0].cost)/20.0;
     } else {
       let current = 0;
       let jump = 1 / (connectors.length - 1);
@@ -470,7 +474,7 @@ class Engine {
 
       return distribution
         .map((value: number, index: number) => {
-          return ((value * orders) / (total * 100)) * connectors[index].cost;
+          return ((value * orders) / (total * 20)) * connectors[index].cost;
         })
         .reduce((prev, cur) => prev + cur);
     }
@@ -485,7 +489,7 @@ onDestroy(() => {
 let default_config: EngineConfiguration = {
     time: 90,
     ticks: 10,
-    startBudget: 20000,
+    startBudget: 10000,
     orderRate: 500,
     maxConnectorCount: 10,
     addConnectorCooldownTime: new RRange(0,10),
@@ -560,6 +564,8 @@ let successWindow = new WindowArray(8);
       </div>
     </div>
 
+    <button class="btn btn-outlin btn-info">User Action</button>
+
     <div class="stats w-2/5 min-w-fit stats-horizontal lg:stats-horizontal shadow bg-hyperswitch-bg text-white">
       {#each successWindow.data as ele} 
         <div class="stat">
@@ -567,8 +573,6 @@ let successWindow = new WindowArray(8);
         </div>
       {/each}
     </div>
-  
-    <button class="btn btn-outlin btn-info">User Action</button>
   
     <div class="overflow-x-auto text-white w-2/5 min-w-fit">
       <table class="table">
