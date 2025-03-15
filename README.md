@@ -1,38 +1,50 @@
-# create-svelte
 
-Everything you need to build a Svelte project, powered by [`create-svelte`](https://github.com/sveltejs/kit/tree/main/packages/create-svelte).
+# Payment Orchestrator Simulator 🎮💰
 
-## Creating a project
+[![Svelte](https://img.shields.io/badge/Svelte-4.x-orange)](https://svelte.dev/)
+![TypeScript](https://img.shields.io/badge/TypeScript-5.x-blue)
 
-If you're seeing this, you've probably already done this step. Congrats!
+A strategic minigame simulating payment orchestration dynamics where merchants balance investments in processors, routing, and SDK quality to maximize profit before time expires. Built with Svelte + TypeScript.
 
-```bash
-# create a new project in the current directory
-npm create svelte@latest
+## 🕹️ Game Concept
 
-# create a new project in my-app
-npm create svelte@latest my-app
+**Objective**: Reach target profit within allotted time by optimizing:
+- **Payment Processors**: Add/remove processors (Stripe, Adyen, etc.)
+- **Routing Strategies**: Balance cost vs success rate
+- **SDK Experience**: Improve developer integration quality
+- **Time Management**: Race against the clock
+
+**Core Mechanics**:
+```plaintext
+Investment → Affects → Transaction Success Rate → Impacts → Profit
+       ↖_________Time Pressure_________↙
 ```
 
-## Developing
+## ✨ Features
+|Component	                |Impact                             |
+|---------------------------|-----------------------------------|
+|🔌 **Processor Management**|	- Add/remove processors         |
+|                           | - Balance fees vs reliability    |
+|🧭 **Routing Strategies**|	- Smart routing configurations|
+  |                        |  - Cost/speed tradeoffs|
+|🧑💻 **SDK Experience**|	- Developer satisfaction|
+ |                       |  - Integration error rates|
+|⏳ **Time Attacks**|	- Quarterly time blocks|
+|                    |  - Market condition changes|
 
-Once you've created a project and installed dependencies with `npm install` (or `pnpm install` or `yarn`), start a development server:
+## 🚀 Getting Started
 
+**Installation**
 ```bash
+git clone https://github.com/Sakilmostak/the-thing.git
+npm install
+```
+
+**Running**
+```bash
+# Dev server
 npm run dev
 
-# or start the server and open the app in a new browser tab
-npm run dev -- --open
-```
-
-## Building
-
-To create a production version of your app:
-
-```bash
+# Production build
 npm run build
 ```
-
-You can preview the production build with `npm run preview`.
-
-> To deploy your app, you may need to install an [adapter](https://kit.svelte.dev/docs/adapters) for your target environment.
